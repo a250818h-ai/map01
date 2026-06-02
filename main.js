@@ -14,7 +14,7 @@ map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
 const initialLocations = [
     { lng: 21.43, lat: 41.60, name: "イスカンダル", images: ["images/FGO_Iskandar1.png", "images/FGO_Iskandar2.png"], videos: ["HzLYW4FkfLw", "dHFuL9ZTy9c"] },
-    { lng: 50.587, lat: 36.396, name: "ハサン・サッバーフ", images: ["images/FGO_Hassan1.png", "images/FGO_Hassan2.png", "images/FGO_Hassan3.png", "images/FGO_Hassan4.png", "images/FGO_Hassan5.png"], videos: ["3H5M06Lq2OU", "6uLCm033Qgk", "BvLG5KsM31w", "1OvE-02E-tE", "-ep2lUo0BlI"] },
+    { lng: 50.587, lat: 36.396, name: "ハサン・サッバーフ", images: ["images/FGO_Hassan1.png", "images/FGO_Hassan2.png", "images/FGO_Hassan3.png", "images/FGO_Hassan4.png", "images/FGO_Hassan5.png"], videos: ["zIdo87JWR1E", "3H5M06Lq2OU", "6uLCm033Qgk", "BvLG5KsM31w", "1OvE-02E-tE", "-ep2lUo0BlI"] },
     { lng: -6.41, lat: 53.88, name: "クー・フーリン", images: ["images/FGO_Cu_Chulainn1.png", "images/FGO_Cu_Chulainn2.png"], videos: ["Oe1id7KeqmE", "rs-Thsmw9vg"]},
     { lng: -4.45, lat: 50.40, name: "アーサー王", images: ["images/FGO_Arthur1.png"], videos: ["4LCSTRy-P8M", "E3EAHZiBx3k"]},
     { lng: 86.93, lat: 25.26, name: "カルナ", images: ["images/FGO_Karna1.png", "images/FGO_Karna2.png"], videos: ["yTZs2V66LlE", "RQ8BJ3oi0mw"]},
