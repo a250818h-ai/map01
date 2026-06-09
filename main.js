@@ -31,8 +31,23 @@ const initialLocations = [
 const appData = [];
 let activeStyle = 'default'; 
 
+function normalizeYouTubeId(value) {
+    if (!value) return '';
+    const str = String(value).trim();
+    const urlMatch = str.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([A-Za-z0-9_-]{11})/);
+    if (urlMatch) return urlMatch[1];
+    return /^[A-Za-z0-9_-]{11}$/.test(str) ? str : '';
+}
+
+function sanitizeVideoList(videos) {
+    return Array.isArray(videos)
+        ? videos.map(normalizeYouTubeId).filter(Boolean)
+        : [];
+}
+
 function addLocationToMap(loc) {
     const listContainer = document.getElementById('location-list');
+    const videos = sanitizeVideoList(loc.videos);
 
     const popupContainer = document.createElement('div');
     popupContainer.className = 'popup-container';
@@ -72,14 +87,14 @@ function addLocationToMap(loc) {
     }
 
     // 動画
-    if (loc.videos && loc.videos.length > 0) {
-        currentRandomVidIndex = Math.floor(Math.random() * loc.videos.length);
+    if (videos.length > 0) {
+        currentRandomVidIndex = Math.floor(Math.random() * videos.length);
         
         const ytWrapper = document.createElement('div');
         ytWrapper.className = 'media-item';
         
         iframeElement = document.createElement('iframe');
-        iframeElement.src = `https://www.youtube.com/embed/${loc.videos[currentRandomVidIndex]}`;
+        iframeElement.src = `https://www.youtube.com/embed/${videos[currentRandomVidIndex]}`;
         iframeElement.style.width = '100%';
         iframeElement.style.height = '100%';
         iframeElement.style.border = 'none';
@@ -117,9 +132,9 @@ function addLocationToMap(loc) {
             currentRandomImgIndex = Math.floor(Math.random() * loc.images.length);
             imgElement.src = loc.images[currentRandomImgIndex];
         }
-        if (loc.videos && loc.videos.length > 1 && iframeElement) {
-            currentRandomVidIndex = Math.floor(Math.random() * loc.videos.length);
-            iframeElement.src = `https://www.youtube.com/embed/${loc.videos[currentRandomVidIndex]}`;
+        if (videos.length > 1 && iframeElement) {
+            currentRandomVidIndex = Math.floor(Math.random() * videos.length);
+            iframeElement.src = `https://www.youtube.com/embed/${videos[currentRandomVidIndex]}`;
         }
     });
 
@@ -192,7 +207,7 @@ function addLocationToMap(loc) {
         }
 
         // --- 動画のカルーセル表示 ---
-        if (loc.videos && loc.videos.length > 0) {
+        if (videos.length > 0) {
             let activeVidIdx = currentRandomVidIndex !== -1 ? currentRandomVidIndex : 0;
             
             const container = document.createElement('div');
@@ -201,16 +216,17 @@ function addLocationToMap(loc) {
             const ytWrapper = document.createElement('div');
             ytWrapper.className = 'media-item';
             const iframe = document.createElement('iframe');
-            iframe.src = `https://www.youtube.com/embed/${loc.videos[activeVidIdx]}`;
+            iframe.src = `https://www.youtube.com/embed/${videos[activeVidIdx]}`;
             iframe.style.width = '100%';
             iframe.style.height = '100%';
             iframe.style.border = 'none';
+            iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
             iframe.setAttribute('allowfullscreen', '');
             ytWrapper.appendChild(iframe);
             container.appendChild(ytWrapper);
 
             // 複数ある場合のみ「前へ」「次へ」ボタンを作成
-            if (loc.videos.length > 1) {
+            if (videos.length > 1) {
                 const controls = document.createElement('div');
                 controls.className = 'carousel-controls';
 
@@ -219,22 +235,22 @@ function addLocationToMap(loc) {
                 prevBtn.innerText = '◀ 前の動画';
 
                 const indicator = document.createElement('span');
-                indicator.innerText = `${activeVidIdx + 1} / ${loc.videos.length}`;
+                indicator.innerText = `${activeVidIdx + 1} / ${videos.length}`;
 
                 const nextBtn = document.createElement('button');
                 nextBtn.className = 'carousel-btn';
                 nextBtn.innerText = '次の動画 ▶';
 
                 prevBtn.onclick = () => {
-                    activeVidIdx = (activeVidIdx - 1 + loc.videos.length) % loc.videos.length;
-                    iframe.src = `https://www.youtube.com/embed/${loc.videos[activeVidIdx]}`;
-                    indicator.innerText = `${activeVidIdx + 1} / ${loc.videos.length}`;
+                    activeVidIdx = (activeVidIdx - 1 + videos.length) % videos.length;
+                    iframe.src = `https://www.youtube.com/embed/${videos[activeVidIdx]}`;
+                    indicator.innerText = `${activeVidIdx + 1} / ${videos.length}`;
                 };
 
                 nextBtn.onclick = () => {
-                    activeVidIdx = (activeVidIdx + 1) % loc.videos.length;
-                    iframe.src = `https://www.youtube.com/embed/${loc.videos[activeVidIdx]}`;
-                    indicator.innerText = `${activeVidIdx + 1} / ${loc.videos.length}`;
+                    activeVidIdx = (activeVidIdx + 1) % videos.length;
+                    iframe.src = `https://www.youtube.com/embed/${videos[activeVidIdx]}`;
+                    indicator.innerText = `${activeVidIdx + 1} / ${videos.length}`;
                 };
 
                 controls.appendChild(prevBtn);
