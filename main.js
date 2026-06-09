@@ -126,7 +126,7 @@ function addLocationToMap(loc) {
         .setLngLat([loc.lng, loc.lat]) 
         .setDOMContent(popupContainer);
 
-    // 【新機能】ポップアップが開かれた時に、再度ランダムで選び直す
+    // ポップアップが開かれた時に、再度ランダムで選び直す
     popup.on('open', () => {
         if (loc.images && loc.images.length > 1 && imgElement) {
             currentRandomImgIndex = Math.floor(Math.random() * loc.images.length);
@@ -589,3 +589,37 @@ document.getElementById('fullscreen-close-btn').addEventListener('click', () => 
     // 裏でYouTubeの音声が鳴り続けないように、中身を空にする
     document.getElementById('fullscreen-content').innerHTML = '';
 });
+
+// 表示用ランダム画像リスト (FGO1.png から FGO4.png)
+const welcomeImages = [
+    "images/FGO1.png",
+    "images/FGO2.png",
+    "images/FGO3.png",
+    "images/FGO4.png"
+];
+
+// ドキュメントの読み込み完了時にランダム画像を設定
+window.addEventListener('DOMContentLoaded', () => {
+    const randomIdx = Math.floor(Math.random() * welcomeImages.length);
+    const welcomeImgEl = document.getElementById('welcome-bg-image');
+    if (welcomeImgEl) {
+        welcomeImgEl.src = welcomeImages[randomIdx];
+    }
+});
+
+// ウェルカム画面をクリックした時の処理
+const welcomeOverlay = document.getElementById('welcome-overlay');
+if (welcomeOverlay) {
+    welcomeOverlay.addEventListener('click', () => {
+        // フェードアウト用のCSSクラスを適用
+        welcomeOverlay.classList.add('fade-out');
+        
+        // 1秒のフェードアウト後に要素を完全に非表示にし、地図をリサイズする
+        setTimeout(() => {
+            welcomeOverlay.style.display = 'none';
+            if (typeof map !== 'undefined') {
+                map.resize();
+            }
+        }, 1000);
+    });
+}
