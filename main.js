@@ -28,6 +28,28 @@ const initialLocations = [
     { lng: 138.577, lat: 35.686, name: "武田信玄", images: ["images/FGO_Takeda_Shingen1.png", "images/FGO_Takeda_Shingen2.png"], videos:["ZshCAp4_C24"]},
 ];
 
+// --- 追加: データの保存と読み込み機能 ---
+const STORAGE_KEY = 'heroMapLocationsData';
+
+function loadLocations() {
+    const storedData = localStorage.getItem(STORAGE_KEY);
+    if (storedData) {
+        try {
+            return JSON.parse(storedData);
+        } catch (e) {
+            console.error("保存データの読み込みに失敗しました", e);
+        }
+    }
+    return initialLocations; // 保存データがない場合は初期データを使用
+}
+
+function saveLocations() {
+    // 現在マップに表示されているすべてのデータを保存
+    const locationsToSave = appData.map(data => data.loc);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(locationsToSave));
+}
+// ----------------------------------------
+
 const appData = [];
 let activeStyle = 'default'; 
 
@@ -368,12 +390,16 @@ function removeLocation(dataObj) {
     const index = appData.indexOf(dataObj);
     if (index > -1) {
         appData.splice(index, 1);
+        saveLocations(); // 削除した後の状態を保存する
     }
 }
 
 map.on('style.load', () => {
     map.setProjection({ type: 'globe' });
-    initialLocations.forEach(loc => addLocationToMap(loc));
+    
+    // 保存されたデータを読み込んで表示
+    const locations = loadLocations();
+    locations.forEach(loc => addLocationToMap(loc));
 });
 
 const toggleEditBtn = document.getElementById('toggle-edit-btn');
@@ -427,6 +453,13 @@ document.getElementById('submit-add-btn').addEventListener('click', () => {
     const lngRaw = toHalfWidth(document.getElementById('add-lng').value);
     const latRaw = toHalfWidth(document.getElementById('add-lat').value);
 
+    // 画像と動画のURLを取得し、カンマ区切りで配列にする
+    const imagesVal = document.getElementById('add-images').value.trim();
+    const videosVal = document.getElementById('add-videos').value.trim();
+    
+    const imagesArray = imagesVal ? imagesVal.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const videosArray = videosVal ? videosVal.split(',').map(s => s.trim()).filter(Boolean) : [];
+
     const lngVal = parseFloat(lngRaw);
     const latVal = parseFloat(latRaw);
 
@@ -440,14 +473,27 @@ document.getElementById('submit-add-btn').addEventListener('click', () => {
         return;
     }
 
-    const newObj = addLocationToMap({ name: nameVal, lng: lngVal, lat: latVal });
+    // 画像と動画のデータを含めて新しく登録
+    const newLoc = { 
+        name: nameVal, 
+        lng: lngVal, 
+        lat: latVal,
+        images: imagesArray,
+        videos: videosArray
+    };
+
+    const newObj = addLocationToMap(newLoc);
+    saveLocations(); // マップに追加した状態を保存する
 
     map.flyTo({ center: [lngVal, latVal], zoom: 6 });
     newObj.popup.addTo(map);
 
+    // フォームの入力をクリア
     document.getElementById('add-name').value = '';
     document.getElementById('add-lng').value = '';
     document.getElementById('add-lat').value = '';
+    document.getElementById('add-images').value = ''; 
+    document.getElementById('add-videos').value = ''; 
     addModal.classList.remove('active');
 });
 
