@@ -28,67 +28,131 @@ const initialLocations = [
     { lng: 138.577, lat: 35.686, name: "武田信玄", images: ["images/FGO_Takeda_Shingen1.png", "images/FGO_Takeda_Shingen2.png"], videos:["ZshCAp4_C24"]},
 ];
 
-// データの保存と読み込み機能
-const STORAGE_KEY = 'heroMapLocationsData';
+// --- IndexedDB を用いた大容量ローカル保存機能の実装 ---
+const DB_NAME = 'HeroMapDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'locations';
 
-function loadLocations() {
-    const storedData = localStorage.getItem(STORAGE_KEY);
-    if (storedData) {
-        try {
-            return JSON.parse(storedData);
-        } catch (e) {
-            console.error("保存データの読み込みに失敗しました", e);
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+            }
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function getAllLocationsFromDB() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function addLocationToDB(loc) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.add(loc);
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function deleteLocationFromDB(id) {
+    if (id === undefined) return;
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(id);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function initDBWithInitialData() {
+    const currentData = await getAllLocationsFromDB();
+    if (currentData.length === 0) {
+        const db = await openDB();
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        for (const loc of initialLocations) {
+            store.add(loc);
         }
     }
-    return initialLocations;
 }
-
-function saveLocations() {
-    const locationsToSave = appData.map(data => data.loc);
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(locationsToSave));
-        return true;
-    } catch (e) {
-        console.error("保存容量エラー:", e);
-        alert("⚠️ ブラウザの保存容量（約5MB）の上限に達しました！\n\nパソコン内の「動画」や「大量の画像」をファイル選択から直接追加すると容量オーバーになります。\n大きいファイルは直接追加せず、HTMLファイルと同じフォルダに置いて、ファイル名（例: videos/movie.mp4）をテキストで入力する方法をおすすめします。");
-        return false;
-    }
-}
+// ----------------------------------------------------
 
 const appData = [];
 let activeStyle = 'default'; 
 
-// YouTubeのID抽出、またはローカル動画パス（mp4等）の許可
-function sanitizeVideoList(videos) {
-    return Array.isArray(videos)
-        ? videos.map(v => {
-            if (!v) return '';
-            const str = String(v).trim();
-            // Data URI や ローカルファイルのパス (mp4等) の場合はそのまま許可
-            if (str.startsWith('data:video/') || str.match(/\.(mp4|webm|ogg)$/i)) {
-                return str;
-            }
-            // YouTubeの場合
-            const ytMatch = str.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([A-Za-z0-9_-]{11})/);
-            if (ytMatch) return ytMatch[1];
-            return /^[A-Za-z0-9_-]{11}$/.test(str) ? str : '';
-        }).filter(Boolean)
-        : [];
+function normalizeYouTubeId(value) {
+    if (!value || value instanceof Blob) return '';
+    const str = String(value).trim();
+    const urlMatch = str.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([A-Za-z0-9_-]{11})/);
+    if (urlMatch) return urlMatch[1];
+    return /^[A-Za-z0-9_-]{11}$/.test(str) ? str : '';
 }
 
-// ファイルをBase64データ(Data URL)に変換する関数
-function readFileAsDataURL(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = e => resolve(e.target.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
+// パソコンのファイル(Blob)かURL文字列かを自動判別して画像要素を生成する
+function createImageElement(src, alt) {
+    const img = document.createElement('img');
+    if (src instanceof Blob) {
+        img.src = URL.createObjectURL(src); // BlobオブジェクトをURL化
+    } else {
+        img.src = src;
+    }
+    img.alt = alt;
+    img.style.width = '100%';
+    img.style.height = '100%';
+    img.style.objectFit = 'contain';
+    img.style.borderRadius = '4px';
+    return img;
+}
+
+// パソコンのファイル(Blob)かYouTubeかを自動判別して動画要素を生成する
+function createVideoElement(src) {
+    if (src instanceof Blob) {
+        // パソコン内の動画ファイルの場合
+        const video = document.createElement('video');
+        video.src = URL.createObjectURL(src);
+        video.controls = true;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'contain';
+        video.style.borderRadius = '4px';
+        return video;
+    } else {
+        // YouTubeのURLやID文字列の場合
+        const ytId = normalizeYouTubeId(src);
+        if (ytId) {
+            const iframe = document.createElement('iframe');
+            iframe.src = `https://www.youtube.com/embed/${ytId}`;
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+            iframe.setAttribute('allowfullscreen', '');
+            iframe.style.borderRadius = '4px';
+            return iframe;
+        }
+    }
+    return null;
 }
 
 function addLocationToMap(loc) {
     const listContainer = document.getElementById('location-list');
-    const videos = sanitizeVideoList(loc.videos);
 
     const popupContainer = document.createElement('div');
     popupContainer.className = 'popup-container';
@@ -102,54 +166,51 @@ function addLocationToMap(loc) {
     let hasMedia = false;
     let currentRandomImgIndex = -1;
     let currentRandomVidIndex = -1;
-    let imgElement = null;
-    let ytWrapper = null; // 動画要素を包むコンテナ
 
-    // 画像の処理
-    if (loc.images && loc.images.length > 0) {
-        currentRandomImgIndex = Math.floor(Math.random() * loc.images.length);
-        const imgWrapper = document.createElement('div');
-        imgWrapper.className = 'media-item';
-        imgElement = document.createElement('img');
-        imgElement.src = loc.images[currentRandomImgIndex];
-        imgElement.style.width = '100%'; imgElement.style.height = '100%';
-        imgElement.style.objectFit = 'contain'; imgElement.style.borderRadius = '4px';
-        imgWrapper.appendChild(imgElement);
-        mediaBox.appendChild(imgWrapper);
-        hasMedia = true;
-    }
+    const imgWrapper = document.createElement('div');
+    imgWrapper.className = 'media-item';
+    imgWrapper.style.display = 'none';
+    mediaBox.appendChild(imgWrapper);
 
-    // 動画の生成処理（YouTubeとローカル動画の切り替え）
-    function renderPopupVideo(src) {
-        ytWrapper.innerHTML = '';
-        let el;
-        if (/^[A-Za-z0-9_-]{11}$/.test(src)) { // YouTubeの場合
-            el = document.createElement('iframe');
-            el.src = `https://www.youtube.com/embed/${src}`;
-            el.style.border = 'none';
-            el.setAttribute('allowfullscreen', '');
-        } else { // ローカル動画(.mp4)やData URIの場合
-            el = document.createElement('video');
-            el.src = src;
-            el.controls = true;
-            el.style.backgroundColor = '#000';
-            el.style.objectFit = 'contain';
+    const vidWrapper = document.createElement('div');
+    vidWrapper.className = 'media-item';
+    vidWrapper.style.display = 'none';
+    mediaBox.appendChild(vidWrapper);
+
+    // ポップアップおよびランダム更新用のメディア反映処理
+    function updatePopupMedia() {
+        imgWrapper.innerHTML = '';
+        imgWrapper.style.display = 'none';
+        vidWrapper.innerHTML = '';
+        vidWrapper.style.display = 'none';
+        hasMedia = false;
+
+        if (loc.images && loc.images.length > 0) {
+            currentRandomImgIndex = Math.floor(Math.random() * loc.images.length);
+            const imgEl = createImageElement(loc.images[currentRandomImgIndex], `${loc.name}の画像`);
+            imgWrapper.appendChild(imgEl);
+            imgWrapper.style.display = 'block';
+            hasMedia = true;
         }
-        el.style.width = '100%'; el.style.height = '100%'; el.style.borderRadius = '4px';
-        ytWrapper.appendChild(el);
+        if (loc.videos && loc.videos.length > 0) {
+            currentRandomVidIndex = Math.floor(Math.random() * loc.videos.length);
+            const vidEl = createVideoElement(loc.videos[currentRandomVidIndex]);
+            if (vidEl) {
+                vidWrapper.appendChild(vidEl);
+                vidWrapper.style.display = 'block';
+                hasMedia = true;
+            }
+        }
+
+        if (hasMedia) {
+            mediaBox.classList.add('has-media');
+        } else {
+            mediaBox.classList.remove('has-media');
+            mediaBox.innerHTML = '<span style="font-size:11px; color:#778899;">No Media</span>';
+        }
     }
 
-    if (videos.length > 0) {
-        currentRandomVidIndex = Math.floor(Math.random() * videos.length);
-        ytWrapper = document.createElement('div');
-        ytWrapper.className = 'media-item';
-        renderPopupVideo(videos[currentRandomVidIndex]);
-        mediaBox.appendChild(ytWrapper);
-        hasMedia = true;
-    }
-
-    if (hasMedia) { mediaBox.classList.add('has-media'); } 
-    else { mediaBox.innerHTML = '<span style="font-size:11px; color:#778899;">No Media</span>'; }
+    updatePopupMedia();
 
     const zoomBtn = document.createElement('button');
     zoomBtn.className = 'popup-zoom-btn';
@@ -163,133 +224,176 @@ function addLocationToMap(loc) {
         .setLngLat([loc.lng, loc.lat]) 
         .setDOMContent(popupContainer);
 
-    // ポップアップを開き直すたびにランダム表示
     popup.on('open', () => {
-        if (loc.images && loc.images.length > 1 && imgElement) {
-            currentRandomImgIndex = Math.floor(Math.random() * loc.images.length);
-            imgElement.src = loc.images[currentRandomImgIndex];
-        }
-        if (videos.length > 1 && ytWrapper) {
-            currentRandomVidIndex = Math.floor(Math.random() * videos.length);
-            renderPopupVideo(videos[currentRandomVidIndex]);
+        if ((loc.images && loc.images.length > 1) || (loc.videos && loc.videos.length > 1)) {
+            updatePopupMedia();
         }
     });
 
-    // 全画面表示機能
+    // カルーセル機能付き全画面表示処理
     zoomBtn.onclick = (e) => {
         e.stopPropagation();
+        
         const modal = document.getElementById('fullscreen-modal');
         const contentBox = document.getElementById('fullscreen-content');
-        contentBox.innerHTML = '';
+        contentBox.innerHTML = ''; 
 
         const titleText = document.createElement('h2');
-        titleText.style.color = '#333'; titleText.innerText = loc.name;
+        titleText.style.color = '#333';
+        titleText.innerText = loc.name;
         titleText.style.margin = '0 0 20px 0';
         contentBox.appendChild(titleText);
 
-        // 画像カルーセル
+        // --- 画像カルーセル ---
         if (loc.images && loc.images.length > 0) {
             let activeImgIdx = currentRandomImgIndex !== -1 ? currentRandomImgIndex : 0;
             const container = document.createElement('div');
             container.className = 'media-carousel-container';
-            const imgWrapper = document.createElement('div');
-            imgWrapper.className = 'media-item';
-            const img = document.createElement('img');
-            img.src = loc.images[activeImgIdx];
-            img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'contain';
-            imgWrapper.appendChild(img);
-            container.appendChild(imgWrapper);
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'media-item';
+            container.appendChild(wrapper);
+
+            const renderImage = (idx) => {
+                wrapper.innerHTML = '';
+                wrapper.appendChild(createImageElement(loc.images[idx], loc.name));
+            };
+            renderImage(activeImgIdx);
 
             if (loc.images.length > 1) {
-                const controls = document.createElement('div'); controls.className = 'carousel-controls';
-                const prevBtn = document.createElement('button'); prevBtn.className = 'carousel-btn'; prevBtn.innerText = '◀ 前の画像';
-                const indicator = document.createElement('span'); indicator.innerText = `${activeImgIdx + 1} / ${loc.images.length}`;
-                const nextBtn = document.createElement('button'); nextBtn.className = 'carousel-btn'; nextBtn.innerText = '次の画像 ▶';
+                const controls = document.createElement('div');
+                controls.className = 'carousel-controls';
+
+                const prevBtn = document.createElement('button');
+                prevBtn.className = 'carousel-btn';
+                prevBtn.innerText = '◀ 前の画像';
+
+                const indicator = document.createElement('span');
+                indicator.innerText = `${activeImgIdx + 1} / ${loc.images.length}`;
+
+                const nextBtn = document.createElement('button');
+                nextBtn.className = 'carousel-btn';
+                nextBtn.innerText = '次の画像 ▶';
 
                 prevBtn.onclick = () => {
                     activeImgIdx = (activeImgIdx - 1 + loc.images.length) % loc.images.length;
-                    img.src = loc.images[activeImgIdx];
+                    renderImage(activeImgIdx);
                     indicator.innerText = `${activeImgIdx + 1} / ${loc.images.length}`;
                 };
+
                 nextBtn.onclick = () => {
                     activeImgIdx = (activeImgIdx + 1) % loc.images.length;
-                    img.src = loc.images[activeImgIdx];
+                    renderImage(activeImgIdx);
                     indicator.innerText = `${activeImgIdx + 1} / ${loc.images.length}`;
                 };
-                controls.appendChild(prevBtn); controls.appendChild(indicator); controls.appendChild(nextBtn);
+
+                controls.appendChild(prevBtn);
+                controls.appendChild(indicator);
+                controls.appendChild(nextBtn);
                 container.appendChild(controls);
             }
             contentBox.appendChild(container);
         }
 
-        // 動画カルーセル（YouTubeとローカル動画対応）
-        if (videos.length > 0) {
+        // --- 動画カルーセル ---
+        if (loc.videos && loc.videos.length > 0) {
             let activeVidIdx = currentRandomVidIndex !== -1 ? currentRandomVidIndex : 0;
             const container = document.createElement('div');
             container.className = 'media-carousel-container';
-            const vidWrapper = document.createElement('div');
-            vidWrapper.className = 'media-item';
-            
-            function createFullscreenVideo(src) {
-                vidWrapper.innerHTML = '';
-                let el;
-                if (/^[A-Za-z0-9_-]{11}$/.test(src)) {
-                    el = document.createElement('iframe');
-                    el.src = `https://www.youtube.com/embed/${src}`;
-                    el.style.border = 'none';
-                    el.setAttribute('allowfullscreen', '');
-                } else {
-                    el = document.createElement('video');
-                    el.src = src;
-                    el.controls = true;
-                    el.style.backgroundColor = '#000';
-                    el.style.objectFit = 'contain';
-                }
-                el.style.width = '100%'; el.style.height = '100%';
-                vidWrapper.appendChild(el);
-            }
-            
-            createFullscreenVideo(videos[activeVidIdx]);
-            container.appendChild(vidWrapper);
 
-            if (videos.length > 1) {
-                const controls = document.createElement('div'); controls.className = 'carousel-controls';
-                const prevBtn = document.createElement('button'); prevBtn.className = 'carousel-btn'; prevBtn.innerText = '◀ 前の動画';
-                const indicator = document.createElement('span'); indicator.innerText = `${activeVidIdx + 1} / ${videos.length}`;
-                const nextBtn = document.createElement('button'); nextBtn.className = 'carousel-btn'; nextBtn.innerText = '次の動画 ▶';
+            const wrapper = document.createElement('div');
+            wrapper.className = 'media-item';
+            container.appendChild(wrapper);
+
+            const renderVideo = (idx) => {
+                wrapper.innerHTML = '';
+                const vidEl = createVideoElement(loc.videos[idx]);
+                if (vidEl) wrapper.appendChild(vidEl);
+            };
+            renderVideo(activeVidIdx);
+
+            if (loc.videos.length > 1) {
+                const controls = document.createElement('div');
+                controls.className = 'carousel-controls';
+
+                const prevBtn = document.createElement('button');
+                prevBtn.className = 'carousel-btn';
+                prevBtn.innerText = '◀ 前の動画';
+
+                const indicator = document.createElement('span');
+                indicator.innerText = `${activeVidIdx + 1} / ${loc.videos.length}`;
+
+                const nextBtn = document.createElement('button');
+                nextBtn.className = 'carousel-btn';
+                nextBtn.innerText = '次の動画 ▶';
 
                 prevBtn.onclick = () => {
-                    activeVidIdx = (activeVidIdx - 1 + videos.length) % videos.length;
-                    createFullscreenVideo(videos[activeVidIdx]);
-                    indicator.innerText = `${activeVidIdx + 1} / ${videos.length}`;
+                    activeVidIdx = (activeVidIdx - 1 + loc.videos.length) % loc.videos.length;
+                    renderVideo(activeVidIdx);
+                    indicator.innerText = `${activeVidIdx + 1} / ${loc.videos.length}`;
                 };
+
                 nextBtn.onclick = () => {
-                    activeVidIdx = (activeVidIdx + 1) % videos.length;
-                    createFullscreenVideo(videos[activeVidIdx]);
-                    indicator.innerText = `${activeVidIdx + 1} / ${videos.length}`;
+                    activeVidIdx = (activeVidIdx + 1) % loc.videos.length;
+                    renderVideo(activeVidIdx);
+                    indicator.innerText = `${activeVidIdx + 1} / ${loc.videos.length}`;
                 };
-                controls.appendChild(prevBtn); controls.appendChild(indicator); controls.appendChild(nextBtn);
+
+                controls.appendChild(prevBtn);
+                controls.appendChild(indicator);
+                controls.appendChild(nextBtn);
                 container.appendChild(controls);
             }
             contentBox.appendChild(container);
         }
+
         modal.classList.add('active');
     };
 
-    const defaultMarker = new maplibregl.Marker({ color: 'red' }).setLngLat([loc.lng, loc.lat]).setPopup(popup);
-    const chaldeaImg = document.createElement('img'); chaldeaImg.src = 'images/Chaldea.png'; chaldeaImg.style.width = '20px'; chaldeaImg.style.height = '20px'; chaldeaImg.style.cursor = 'pointer';
-    const chaldeaMarker = new maplibregl.Marker({ element: chaldeaImg }).setLngLat([loc.lng, loc.lat]).setPopup(popup);
-    const bigbenImg = document.createElement('img'); bigbenImg.src = 'images/Big Ben.png'; bigbenImg.style.width = '45px'; bigbenImg.style.height = '45px'; bigbenImg.style.cursor = 'pointer';
-    const bigbenMarker = new maplibregl.Marker({ element: bigbenImg }).setLngLat([loc.lng, loc.lat]).setPopup(popup);
+    const defaultMarker = new maplibregl.Marker({ color: 'red' })
+        .setLngLat([loc.lng, loc.lat])
+        .setPopup(popup);
 
-    if (activeStyle === 'chaldea') chaldeaMarker.addTo(map);
-    else if (activeStyle === 'bigben') bigbenMarker.addTo(map);
-    else defaultMarker.addTo(map);
+    const chaldeaImg = document.createElement('img');
+    chaldeaImg.src = 'images/Chaldea.png';   
+    chaldeaImg.style.width = '20px';    
+    chaldeaImg.style.height = '20px';   
+    chaldeaImg.style.cursor = 'pointer';
+    const chaldeaMarker = new maplibregl.Marker({ element: chaldeaImg })
+        .setLngLat([loc.lng, loc.lat])
+        .setPopup(popup);
 
-    const item = document.createElement('div'); item.className = 'loc-item';
-    const leftWrapper = document.createElement('div'); leftWrapper.style.display = 'flex'; leftWrapper.style.alignItems = 'center'; leftWrapper.style.gap = '8px'; leftWrapper.style.flex = '1';
+    const bigbenImg = document.createElement('img');
+    bigbenImg.src = 'images/Big Ben.png';   
+    bigbenImg.style.width = '45px';    
+    bigbenImg.style.height = '45px';   
+    bigbenImg.style.cursor = 'pointer';
+    const bigbenMarker = new maplibregl.Marker({ element: bigbenImg })
+        .setLngLat([loc.lng, loc.lat])
+        .setPopup(popup);
+
+    if (activeStyle === 'chaldea') {
+        chaldeaMarker.addTo(map);
+    } else if (activeStyle === 'bigben') {
+        bigbenMarker.addTo(map);
+    } else {
+        defaultMarker.addTo(map);
+    }
+
+    const item = document.createElement('div');
+    item.className = 'loc-item';
     
-    const chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = document.getElementById('toggle-markers-chk').checked; chk.style.cursor = 'pointer';
+    const leftWrapper = document.createElement('div');
+    leftWrapper.style.display = 'flex';
+    leftWrapper.style.alignItems = 'center';
+    leftWrapper.style.gap = '8px';
+    leftWrapper.style.flex = '1';
+    
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = document.getElementById('toggle-markers-chk').checked; 
+    chk.style.cursor = 'pointer';
+    
     chk.addEventListener('change', (e) => {
         const show = e.target.checked;
         defaultMarker.getElement().style.display = show ? 'block' : 'none';
@@ -297,23 +401,35 @@ function addLocationToMap(loc) {
         bigbenMarker.getElement().style.display = show ? 'block' : 'none';
     });
 
-    const nameSpan = document.createElement('div'); nameSpan.className = 'loc-name'; nameSpan.innerHTML = `<strong>${loc.name}</strong>`;
-    leftWrapper.appendChild(chk); leftWrapper.appendChild(nameSpan);
+    const nameSpan = document.createElement('div');
+    nameSpan.className = 'loc-name';
+    nameSpan.innerHTML = `<strong>${loc.name}</strong>`;
+    
+    leftWrapper.appendChild(chk);
+    leftWrapper.appendChild(nameSpan);
 
-    const delBtn = document.createElement('button'); delBtn.className = 'delete-btn'; delBtn.innerText = '削除';
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-btn';
+    delBtn.innerText = '削除';
 
-    item.appendChild(leftWrapper); item.appendChild(delBtn);
+    item.appendChild(leftWrapper);
+    item.appendChild(delBtn);
     
     leftWrapper.onclick = (e) => {
         if (e.target.tagName.toLowerCase() !== 'input') {
-            map.flyTo({ center: [loc.lng, loc.lat], zoom: 6 }); popup.addTo(map);
+            map.flyTo({ center: [loc.lng, loc.lat], zoom: 6 });
+            popup.addTo(map);
         }
     };
 
     const dataObj = { loc, defaultMarker, chaldeaMarker, bigbenMarker, popup, item, chk };
     appData.push(dataObj);
 
-    delBtn.onclick = (e) => { e.stopPropagation(); removeLocation(dataObj); };
+    delBtn.onclick = async (e) => {
+        e.stopPropagation(); 
+        await removeLocation(dataObj);
+    };
+
     listContainer.appendChild(item);
 
     const showMarkers = chk.checked;
@@ -321,25 +437,35 @@ function addLocationToMap(loc) {
     chaldeaMarker.getElement().style.display = showMarkers ? 'block' : 'none';
     bigbenMarker.getElement().style.display = showMarkers ? 'block' : 'none';
 
-    if (document.getElementById('toggle-popups-chk').checked) popup.addTo(map);
+    if (document.getElementById('toggle-popups-chk').checked) {
+        popup.addTo(map);
+    }
 
     return dataObj;
 }
 
-function removeLocation(dataObj) {
-    dataObj.defaultMarker.remove(); dataObj.chaldeaMarker.remove(); dataObj.bigbenMarker.remove(); 
-    dataObj.popup.remove(); dataObj.item.remove();   
+async function removeLocation(dataObj) {
+    dataObj.defaultMarker.remove(); 
+    dataObj.chaldeaMarker.remove(); 
+    dataObj.bigbenMarker.remove(); 
+    dataObj.popup.remove();  
+    dataObj.item.remove();   
     
     const index = appData.indexOf(dataObj);
     if (index > -1) {
         appData.splice(index, 1);
-        saveLocations(); 
+        if (dataObj.loc.id !== undefined) {
+            await deleteLocationFromDB(dataObj.loc.id); // データベースから非同期削除
+        }
     }
 }
 
-map.on('style.load', () => {
+map.on('style.load', async () => {
     map.setProjection({ type: 'globe' });
-    const locations = loadLocations();
+    
+    // DB初期化と読み込みの同期処理
+    await initDBWithInitialData();
+    const locations = await getAllLocationsFromDB();
     locations.forEach(loc => addLocationToMap(loc));
 });
 
@@ -348,6 +474,7 @@ const editControls = document.getElementById('edit-controls');
 toggleEditBtn.addEventListener('click', () => {
     const isActive = editControls.classList.toggle('active');
     toggleEditBtn.textContent = isActive ? '閉じる' : '編集メニューを開く';
+    
     if (!isActive) {
         document.getElementById('location-list').classList.remove('delete-mode');
         document.getElementById('toggle-delete-mode-btn').style.background = '';
@@ -359,91 +486,118 @@ const toggleDeleteModeBtn = document.getElementById('toggle-delete-mode-btn');
 toggleDeleteModeBtn.addEventListener('click', () => {
     const list = document.getElementById('location-list');
     const isDeleteMode = list.classList.toggle('delete-mode');
-    if (isDeleteMode) { toggleDeleteModeBtn.style.background = '#e74c3c'; toggleDeleteModeBtn.style.color = 'white'; } 
-    else { toggleDeleteModeBtn.style.background = ''; toggleDeleteModeBtn.style.color = ''; }
+    
+    if (isDeleteMode) {
+        toggleDeleteModeBtn.style.background = '#e74c3c';
+        toggleDeleteModeBtn.style.color = 'white';
+    } else {
+        toggleDeleteModeBtn.style.background = '';
+        toggleDeleteModeBtn.style.color = '';
+    }
 });
 
 const addModal = document.getElementById('add-modal');
-document.getElementById('show-add-modal-btn').addEventListener('click', () => { addModal.classList.add('active'); });
-document.getElementById('cancel-add-btn').addEventListener('click', () => { addModal.classList.remove('active'); });
+document.getElementById('show-add-modal-btn').addEventListener('click', () => {
+    addModal.classList.add('active');
+});
+
+document.getElementById('cancel-add-btn').addEventListener('click', () => {
+    addModal.classList.remove('active');
+});
 
 function toHalfWidth(str) {
     if (!str) return "";
     let half = str.replace(/ /g, ''); 
-    half = half.replace(/[０-９．]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-    return half.replace(/[－ー−–—]/g, '-').trim();
+    half = half.replace(/[０-９．]/g, function(s) { 
+        return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
+    });
+    half = half.replace(/[－ー−–—]/g, '-'); 
+    return half.trim();
 }
 
-// 保存ボタンの処理（ファイル読み込みの非同期対応）
+// 追加するボタンの処理
 document.getElementById('submit-add-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('submit-add-btn');
-    const originalText = btn.innerText;
-    btn.innerText = '処理中...';
-    btn.disabled = true;
+    const nameVal = document.getElementById('add-name').value.trim() || '名称未設定';
+    const lngRaw = toHalfWidth(document.getElementById('add-lng').value);
+    const latRaw = toHalfWidth(document.getElementById('add-lat').value);
 
-    try {
-        const nameVal = document.getElementById('add-name').value.trim() || '名称未設定';
-        const lngRaw = toHalfWidth(document.getElementById('add-lng').value);
-        const latRaw = toHalfWidth(document.getElementById('add-lat').value);
+    let imagesArray = [];
+    let videosArray = [];
 
-        const imagesVal = document.getElementById('add-images').value.trim();
-        const videosVal = document.getElementById('add-videos').value.trim();
-        
-        const imagesArray = imagesVal ? imagesVal.split(',').map(s => s.trim()).filter(Boolean) : [];
-        const videosArray = videosVal ? videosVal.split(',').map(s => s.trim()).filter(Boolean) : [];
-
-        const lngVal = parseFloat(lngRaw);
-        const latVal = parseFloat(latRaw);
-
-        if (isNaN(lngVal) || isNaN(latVal)) {
-            alert('経度と緯度には正しい数字を入力してください。'); return;
+    // 1. パソコンのファイル選択から画像を取得
+    const imagesFileInput = document.getElementById('add-images-file');
+    if (imagesFileInput.files.length > 0) {
+        for (let i = 0; i < imagesFileInput.files.length; i++) {
+            imagesArray.push(imagesFileInput.files[i]); // File(Blob)オブジェクトを格納
         }
-        if (lngVal < -180 || lngVal > 180 || latVal < -90 || latVal > 90) {
-            alert('経度: -180〜180、緯度: -90〜90 の間で入力してください。'); return;
-        }
-
-        const localImgFiles = document.getElementById('add-local-images').files;
-        for (let i = 0; i < localImgFiles.length; i++) {
-            const dataUrl = await readFileAsDataURL(localImgFiles[i]);
-            imagesArray.push(dataUrl);
-        }
-
-        const localVidFiles = document.getElementById('add-local-videos').files;
-        for (let i = 0; i < localVidFiles.length; i++) {
-            const dataUrl = await readFileAsDataURL(localVidFiles[i]);
-            videosArray.push(dataUrl);
-        }
-
-        const newLoc = { name: nameVal, lng: lngVal, lat: latVal, images: imagesArray, videos: videosArray };
-        const newObj = addLocationToMap(newLoc);
-        
-        saveLocations(); 
-
-        map.flyTo({ center: [lngVal, latVal], zoom: 6 });
-        newObj.popup.addTo(map);
-
-        // フォームのリセット
-        document.getElementById('add-name').value = '';
-        document.getElementById('add-lng').value = '';
-        document.getElementById('add-lat').value = '';
-        document.getElementById('add-images').value = ''; 
-        document.getElementById('add-videos').value = ''; 
-        document.getElementById('add-local-images').value = '';
-        document.getElementById('add-local-videos').value = '';
-        addModal.classList.remove('active');
-
-    } catch(e) {
-        console.error(e);
-        alert("ファイルの追加中にエラーが発生しました。");
-    } finally {
-        btn.innerText = originalText;
-        btn.disabled = false;
     }
+    // 2. URL入力から画像を取得
+    const imagesUrlVal = document.getElementById('add-images-url').value.trim();
+    if (imagesUrlVal) {
+        const urls = imagesUrlVal.split(',').map(s => s.trim()).filter(Boolean);
+        imagesArray = imagesArray.concat(urls);
+    }
+
+    // 3. パソコンのファイル選択から動画を取得
+    const videosFileInput = document.getElementById('add-videos-file');
+    if (videosFileInput.files.length > 0) {
+        for (let i = 0; i < videosFileInput.files.length; i++) {
+            videosArray.push(videosFileInput.files[i]); // File(Blob)オブジェクトを格納
+        }
+    }
+    // 4. URL入力から動画を取得
+    const videosUrlVal = document.getElementById('add-videos-url').value.trim();
+    if (videosUrlVal) {
+        const urls = videosUrlVal.split(',').map(s => s.trim()).filter(Boolean);
+        videosArray = videosArray.concat(urls);
+    }
+
+    const lngVal = parseFloat(lngRaw);
+    const latVal = parseFloat(latRaw);
+
+    if (isNaN(lngVal) || isNaN(latVal)) {
+        alert('追加できません。経度と緯度には正しい数字を入力してください。');
+        return;
+    }
+
+    if (lngVal < -180 || lngVal > 180 || latVal < -90 || latVal > 90) {
+        alert('追加できません。\n\n【正しい範囲】\n・経度: -180 から 180 の間\n・緯度: -90 から 90 の間\n\n※経度と緯度の入力が逆になっていないか確認してください。');
+        return;
+    }
+
+    const newLoc = { 
+        name: nameVal, 
+        lng: lngVal, 
+        lat: latVal,
+        images: imagesArray,
+        videos: videosArray
+    };
+
+    // データベースへ非同期永続保存し、自動採番されたIDを取得
+    const insertedId = await addLocationToDB(newLoc);
+    newLoc.id = insertedId;
+
+    const newObj = addLocationToMap(newLoc);
+
+    map.flyTo({ center: [lngVal, latVal], zoom: 6 });
+    newObj.popup.addTo(map);
+
+    // フォーム全体の入力をリセット
+    document.getElementById('add-name').value = '';
+    document.getElementById('add-lng').value = '';
+    document.getElementById('add-lat').value = '';
+    document.getElementById('add-images-file').value = ''; 
+    document.getElementById('add-images-url').value = ''; 
+    document.getElementById('add-videos-file').value = ''; 
+    document.getElementById('add-videos-url').value = ''; 
+    addModal.classList.remove('active');
 });
 
 document.getElementById('fast-map-btn').addEventListener('click', () => {
     map.flyTo({ center: initialCenter, zoom: initialZoom, bearing: 0, pitch: 0, speed: 1.2 });
-    if (!document.getElementById('toggle-popups-chk').checked) { appData.forEach(data => data.popup.remove()); }
+    if (!document.getElementById('toggle-popups-chk').checked) {
+        appData.forEach(data => data.popup.remove());
+    }
 });
 
 document.getElementById('toggle-markers-chk').addEventListener('change', (e) => {
@@ -452,41 +606,64 @@ document.getElementById('toggle-markers-chk').addEventListener('change', (e) => 
         data.defaultMarker.getElement().style.display = show ? 'block' : 'none';
         data.chaldeaMarker.getElement().style.display = show ? 'block' : 'none';
         data.bigbenMarker.getElement().style.display = show ? 'block' : 'none';
-        if (data.chk) data.chk.checked = show; 
+        if (data.chk) {
+            data.chk.checked = show; 
+        }
     });
 });
 
 document.getElementById('toggle-popups-chk').addEventListener('change', (e) => {
     const show = e.target.checked;
-    appData.forEach(data => { if (show) data.popup.addTo(map); else data.popup.remove(); });
+    appData.forEach(data => {
+        if (show) data.popup.addTo(map);
+        else data.popup.remove();
+    });
 });
 
 let isGlobeMode = true;
 const toggleMapModeBtn = document.getElementById('toggle-map-mode-btn');
 toggleMapModeBtn.addEventListener('click', (e) => {
     isGlobeMode = !isGlobeMode;
-    if (isGlobeMode) { map.setProjection({ type: 'globe' }); e.target.textContent = '2Dマップに切り替える'; } 
-    else { map.setProjection({ type: 'mercator' }); e.target.textContent = '3Dマップに切り替える'; }
+    if (isGlobeMode) {
+        map.setProjection({ type: 'globe' });
+        e.target.textContent = '2Dマップに切り替える';
+    } else {
+        map.setProjection({ type: 'mercator' });
+        e.target.textContent = '3Dマップに切り替える';
+    }
 });
 
 const markerToggleBtn = document.getElementById('marker-toggle-btn');
 const markerDropdownMenu = document.getElementById('marker-dropdown-menu');
 
-markerToggleBtn.addEventListener('click', (e) => { e.stopPropagation(); markerDropdownMenu.classList.toggle('show'); });
+markerToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    markerDropdownMenu.classList.toggle('show');
+});
 
 document.querySelectorAll('.menu-item').forEach(item => {
     item.addEventListener('click', (e) => {
         e.stopPropagation();
+        
         activeStyle = item.getAttribute('data-value');
+
         document.querySelectorAll('.menu-item').forEach(btn => btn.classList.remove('selected'));
         item.classList.add('selected');
+
         markerDropdownMenu.classList.remove('show');
 
         appData.forEach(data => {
-            data.defaultMarker.remove(); data.chaldeaMarker.remove(); data.bigbenMarker.remove();
-            if (activeStyle === 'chaldea') data.chaldeaMarker.addTo(map);
-            else if (activeStyle === 'bigben') data.bigbenMarker.addTo(map);
-            else data.defaultMarker.addTo(map);
+            data.defaultMarker.remove();
+            data.chaldeaMarker.remove();
+            data.bigbenMarker.remove();
+
+            if (activeStyle === 'chaldea') {
+                data.chaldeaMarker.addTo(map);
+            } else if (activeStyle === 'bigben') {
+                data.bigbenMarker.addTo(map);
+            } else {
+                data.defaultMarker.addTo(map);
+            }
 
             const showMarkers = data.chk.checked;
             data.defaultMarker.getElement().style.display = showMarkers ? 'block' : 'none';
@@ -496,36 +673,54 @@ document.querySelectorAll('.menu-item').forEach(item => {
     });
 });
 
-document.addEventListener('click', () => { markerDropdownMenu.classList.remove('show'); });
+document.addEventListener('click', () => {
+    markerDropdownMenu.classList.remove('show');
+});
 
 const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn');
 const sidebar = document.getElementById('sidebar');
 const resizer = document.getElementById('resizer');
 const mapContainer = document.getElementById('map-container');
-let lastSidebarWidth = '300px'; let isResizing = false;
+let lastSidebarWidth = '300px'; 
+let isResizing = false;
 
 toggleSidebarBtn.addEventListener('click', () => {
     const isCollapsed = sidebar.classList.toggle('collapsed');
     resizer.classList.toggle('hidden');
-    if (isCollapsed) { toggleSidebarBtn.textContent = 'リストを開く'; } 
-    else { toggleSidebarBtn.textContent = 'リストを閉じる'; sidebar.style.width = lastSidebarWidth; }
-    map.resize(); setTimeout(() => map.resize(), 50);
+    if (isCollapsed) {
+        toggleSidebarBtn.textContent = 'リストを開く';
+    } else {
+        toggleSidebarBtn.textContent = 'リストを閉じる';
+        sidebar.style.width = lastSidebarWidth;
+    }
+    map.resize();
+    setTimeout(() => map.resize(), 50);
 });
 
 resizer.addEventListener('mousedown', (e) => {
     if (sidebar.classList.contains('collapsed')) return;
-    isResizing = true; document.body.style.cursor = 'col-resize'; mapContainer.style.pointerEvents = 'none'; e.preventDefault(); 
+    isResizing = true;
+    document.body.style.cursor = 'col-resize';
+    mapContainer.style.pointerEvents = 'none'; 
+    e.preventDefault(); 
 });
+
 document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
     let newWidth = e.clientX;
     if (newWidth > 150 && newWidth < window.innerWidth * 0.8) {
-        lastSidebarWidth = newWidth + 'px'; sidebar.style.width = lastSidebarWidth; map.resize(); 
+        lastSidebarWidth = newWidth + 'px'; 
+        sidebar.style.width = lastSidebarWidth;
+        map.resize(); 
     }
 });
+
 document.addEventListener('mouseup', () => {
     if (isResizing) {
-        isResizing = false; document.body.style.cursor = 'default'; mapContainer.style.pointerEvents = 'auto'; map.resize(); 
+        isResizing = false;
+        document.body.style.cursor = 'default';
+        mapContainer.style.pointerEvents = 'auto'; 
+        map.resize(); 
     }
 });
 
@@ -535,11 +730,19 @@ document.getElementById('fullscreen-close-btn').addEventListener('click', () => 
     document.getElementById('fullscreen-content').innerHTML = '';
 });
 
-const welcomeImages = ["images/FGO1.png", "images/FGO2.png", "images/FGO3.png", "images/FGO4.png"];
+const welcomeImages = [
+    "images/FGO1.png",
+    "images/FGO2.png",
+    "images/FGO3.png",
+    "images/FGO4.png"
+];
+
 window.addEventListener('DOMContentLoaded', () => {
     const randomIdx = Math.floor(Math.random() * welcomeImages.length);
     const welcomeImgEl = document.getElementById('welcome-bg-image');
-    if (welcomeImgEl) welcomeImgEl.src = welcomeImages[randomIdx];
+    if (welcomeImgEl) {
+        welcomeImgEl.src = welcomeImages[randomIdx];
+    }
 });
 
 const welcomeOverlay = document.getElementById('welcome-overlay');
@@ -548,7 +751,9 @@ if (welcomeOverlay) {
         welcomeOverlay.classList.add('fade-out');
         setTimeout(() => {
             welcomeOverlay.style.display = 'none';
-            if (typeof map !== 'undefined') map.resize();
+            if (typeof map !== 'undefined') {
+                map.resize();
+            }
         }, 1000);
     });
 }
